@@ -26,6 +26,12 @@ const server = net.createServer((socket) => {
                 changeResponse(response)
                 break;
             }
+            case 'user-agent': {
+                const userAgent = request.split('User-Agent: ')[1].split('\r\n')[0]
+                response = `HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: ${userAgent.length}\r\n\r\n${userAgent}`
+                changeResponse(response)
+                break;
+            }
             default: {
                 response = 'HTTP/1.1 404 Not Found\r\n\r\n'
                 changeResponse(response)
