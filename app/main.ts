@@ -1,11 +1,24 @@
+import { readFileSync } from 'node:fs';
 import * as net from 'node:net';
+import { argv } from 'node:process';
+
+const CLRF = '\r\n'
+
+const createHttpResponse = (startLine: string, headers?: string[], body?: string | Buffer) => {
+    let response = startLine + CLRF;
+    if (headers) {
+        const stringHeaders = headers.reduce((final, header) => final + header + CLRF, '')
+        response += stringHeaders + CLRF;
+    } else {
+        response += CLRF
+    }
+    return `${response}${body || ''}`;
+}
 
 const server = net.createServer((socket) => {
     socket.on('data', (data) => {
         const request = data.toString();
-        console.log(request);
         const path = request.split(' ')[1];
-        console.log(path.split('/')[1])
         const params = path.split('/')[1];
         let response: string;
 
@@ -31,6 +44,22 @@ const server = net.createServer((socket) => {
                 response = `HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: ${userAgent.length}\r\n\r\n${userAgent}`
                 changeResponse(response)
                 break;
+            }
+            case 'files': {
+                const fileName = path.split('/')[2]
+                const dir = argv[argv.length - 1];
+
+                try {
+                    const file = readFileSync(`${dir}/${fileName}`);
+
+                    if (file) {
+                        const response = createHttpResponse('HTTP/1.1 200 OK', ['Content-Type: application/octet-stream', `Content-Length: ${file.length}`], file);
+                        changeResponse(response)
+                    }
+                } catch (err) {
+                    const response = createHttpResponse('HTTP/1.1 404 Not Found');
+                    changeResponse(response);
+                }
             }
             default: {
                 response = 'HTTP/1.1 404 Not Found\r\n\r\n'
