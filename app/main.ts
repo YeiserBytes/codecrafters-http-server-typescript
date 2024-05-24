@@ -39,23 +39,28 @@ const parseHttpRequest = (data: Buffer) => {
     const path = fullPath.split('?')[0];
     const params = fullPath.split('?')[1] || '';
 
-    const body = request.split('\r\n\r\n')[1];
-    const acceptEncodings = ['gzip', 'deflate', 'br']
+    const body = request.split('\r\n\r\n')[1] || '';
+    const acceptEncodings = ['gzip', 'deflate', 'br'];
 
     let acceptEncoding = '';
+    let foundAcceptEncoding = false;
+
     for (const header of headers) {
         if (header.toLowerCase().startsWith('accept-encoding:')) {
-            acceptEncoding = header.split(':')[1].trim();
-            if (!acceptEncodings.includes(acceptEncoding)) {
-                acceptEncoding = '';
+            const encodings = header.split(':')[1].trim().split(',').map(enc => enc.trim());
+            for (const encoding of encodings) {
+                if (acceptEncodings.includes(encoding)) {
+                    acceptEncoding = encoding;
+                    foundAcceptEncoding = true;
+                    break;
+                }
             }
-            break;
         }
+        if (foundAcceptEncoding) break;
     }
 
     return { path, params, method, body, acceptEncoding };
 };
-
 
 const server = net.createServer((socket) => {
     socket.on('data', (data) => {
