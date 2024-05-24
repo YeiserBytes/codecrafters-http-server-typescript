@@ -8,24 +8,16 @@ const FILE_REGEX = /^\/files\/(.+)$/;
 
 function createHttpResponse(
     startLine: string,
-    headers?: string[],
-    data?: string | Buffer,
+    headers: string[] = [],
+    data: string | Buffer = '',
     acceptEncoding?: string
 ): string {
-    let response = startLine + CLRF;
-
     if (acceptEncoding) {
-        headers = headers || [];
         headers.push(`Content-Encoding: ${acceptEncoding}`);
     }
 
-    if (headers) {
-        const stringHeaders = headers.reduce((final, header) => final + header + CLRF, '')
-        response += stringHeaders + CLRF;
-    } else {
-        response += CLRF
-    }
-    return `${response}${data || ''}`;
+    const stringHeaders = headers.reduce((final, header) => final + header + CLRF, '');
+    return `${startLine}${CLRF}${stringHeaders}${CLRF}${data}`;
 }
 
 const parseHttpRequest = (data: Buffer) => {
