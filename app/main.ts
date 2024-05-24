@@ -6,8 +6,19 @@ import { argv } from 'node:process';
 const CLRF = '\r\n'
 const FILE_REGEX = /^\/files\/(.+)$/;
 
-const createHttpResponse = (startLine: string, headers?: string[], data?: string | Buffer) => {
+function createHttpResponse(
+    startLine: string,
+    headers?: string[],
+    data?: string | Buffer,
+    acceptEncoding?: string
+): string {
     let response = startLine + CLRF;
+
+    if (acceptEncoding) {
+        headers = headers || [];
+        headers.push(`Content-Encoding: ${acceptEncoding}`);
+    }
+
     if (headers) {
         const stringHeaders = headers.reduce((final, header) => final + header + CLRF, '')
         response += stringHeaders + CLRF;
@@ -17,12 +28,43 @@ const createHttpResponse = (startLine: string, headers?: string[], data?: string
     return `${response}${data || ''}`;
 }
 
+const parseHttpRequest = (data: Buffer) => {
+    const request = data.toString();
+    const lines = request.split('\r\n');
+    const startLine = lines[0];
+    const headers = lines.slice(1);
+
+    const method = startLine.split(' ')[0];
+    const fullPath = startLine.split(' ')[1];
+    const path = fullPath.split('?')[0];
+    const params = fullPath.split('?')[1] || '';
+
+    const body = request.split('\r\n\r\n')[1];
+    const acceptEncodings = ['gzip', 'deflate', 'br']
+
+    let acceptEncoding = '';
+    for (const header of headers) {
+        if (header.toLowerCase().startsWith('accept-encoding:')) {
+            acceptEncoding = header.split(':')[1].trim();
+            if (!acceptEncodings.includes(acceptEncoding)) {
+                acceptEncoding = '';
+            }
+            break;
+        }
+    }
+
+    return { path, params, method, body, acceptEncoding };
+};
+
+
 const server = net.createServer((socket) => {
     socket.on('data', (data) => {
         const request = data.toString();
         const path = request.split(' ')[1];
         const params = path.split('/')[1];
         const method = request.split(' ')[0];
+        console.log('request', request)
+        const { acceptEncoding } = parseHttpRequest(data);
         let response: string;
 
         function changeResponse(response: string): void {
@@ -32,13 +74,15 @@ const server = net.createServer((socket) => {
 
         switch (params) {
             case '': {
-                response = 'HTTP/1.1 200 OK\r\n\r\n'
+                response = createHttpResponse('HTTP/1.1 200 OK', ['Content-Type: text/plain']);
+
                 changeResponse(response)
                 break;
             }
             case 'echo': {
                 const message = path.split('/')[2]
-                response = `HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: ${message.length}\r\n\r\n${message}`
+                response = createHttpResponse('HTTP/1.1 200 OK', ['Content-Type: text/plain', `Content-Length: ${message.length}`], message, acceptEncoding === '' ? undefined : acceptEncoding)
+
                 changeResponse(response)
                 break;
             }
