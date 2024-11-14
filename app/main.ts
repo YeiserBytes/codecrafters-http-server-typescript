@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import * as NodePath from 'node:path';
 import * as net from 'node:net';
 import { argv } from 'node:process';
+import * as zlib from 'node:zlib';
 
 const CLRF = '\r\n'
 const FILE_REGEX = /^\/files\/(.+)$/;
@@ -80,6 +81,13 @@ const server = net.createServer((socket) => {
                 const message = path.split('/')[2]
                 response = createHttpResponse('HTTP/1.1 200 OK', ['Content-Type: text/plain', `Content-Length: ${message.length}`], message, acceptEncoding === '' ? undefined : acceptEncoding)
 
+                const buffer = Buffer.from(message, 'utf-8')
+                const zipped = zlib.gzipSync(buffer)
+
+                if (acceptEncoding === 'gzip') {
+                    response = createHttpResponse('HTTP/1.1 200 OK', ['Content-Type: text/plain', `Content-Length: ${zipped.length}`], zipped, acceptEncoding)
+                }
+
                 changeResponse(response)
                 break;
             }
@@ -121,6 +129,7 @@ const server = net.createServer((socket) => {
                         changeResponse(response);
                     }
                 }
+                break;
             }
             default: {
                 response = 'HTTP/1.1 404 Not Found\r\n\r\n'
