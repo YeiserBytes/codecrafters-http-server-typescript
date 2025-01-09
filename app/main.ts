@@ -62,7 +62,6 @@ const server = net.createServer((socket) => {
         const params = path.split('/')[1];
         const method = request.split(' ')[0];
         console.log('request', request)
-        const { acceptEncoding } = parseHttpRequest(data);
         let response: string;
 
         function changeResponse(response: string): void {
@@ -79,13 +78,18 @@ const server = net.createServer((socket) => {
             }
             case 'echo': {
                 const message = path.split('/')[2]
+                const reqBody = data.toString().split('\r\n')
+                const encoding = reqBody.filter((header) => header.includes("Accept-Encoding"));
+                const acceptEncoding = encoding.length > 0 ? encoding[0].split(": ")[1] : '';
                 response = createHttpResponse('HTTP/1.1 200 OK', ['Content-Type: text/plain', `Content-Length: ${message.length}`], message, acceptEncoding === '' ? undefined : acceptEncoding)
 
-                const buffer = Buffer.from(message, 'utf-8')
-                const zipped = zlib.gzipSync(buffer)
+                const buffer = Buffer.from(message, 'utf8');
+                const zipped = zlib.gzipSync(buffer);
 
                 if (acceptEncoding === 'gzip') {
-                    response = createHttpResponse('HTTP/1.1 200 OK', ['Content-Type: text/plain', `Content-Length: ${zipped.length}`], zipped, acceptEncoding)
+                    // response = createHttpResponse('HTTP/1.1 200 OK', ['Content-Type: text/plain', `Content-Length: ${zipped.length}`], zipped, acceptEncoding)
+                    socket.write(`HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: ${zipped.length}\r\nContent-Encoding: gzip\r\n\r\n`);
+                    socket.write(zipped);
                 }
 
                 changeResponse(response)
