@@ -1,155 +1,236 @@
 import fs from 'node:fs';
-import * as NodePath from 'node:path';
-import * as net from 'node:net';
+import NodePath from 'node:path';
+import net from 'node:net';
 import { argv } from 'node:process';
-import * as zlib from 'node:zlib';
+import zlib from 'node:zlib';
 
 const CLRF = '\r\n'
 const FILE_REGEX = /^\/files\/(.+)$/;
+const DEFAULT_PORT = 4221
+const DEFAULT_HOST = 'localhost'
 
-function createHttpResponse(
-    startLine: string,
-    headers: string[] = [],
-    data: string | Buffer = '',
-    acceptEncoding?: string
-): string {
-    if (acceptEncoding) {
-        headers.push(`Content-Encoding: ${acceptEncoding}`);
-    }
-
-    const stringHeaders = headers.reduce((final, header) => final + header + CLRF, '');
-    return `${startLine}${CLRF}${stringHeaders}${CLRF}${data}`;
+interface HttpRequest {
+    method: string
+    path: string
+    version: string
+    headers: Map<string, string>
+    body: string
+    param: string
 }
 
-const parseHttpRequest = (data: Buffer) => {
-    const request = data.toString();
-    const lines = request.split('\r\n');
-    const startLine = lines[0];
-    const headers = lines.slice(1);
+interface HttpResponse {
+    statusLine: string
+    headers: Map<string, string>
+    body: string | Buffer
+}
 
-    const method = startLine.split(' ')[0];
-    const fullPath = startLine.split(' ')[1];
-    const path = fullPath.split('?')[0];
-    const params = fullPath.split('?')[1] || '';
+function parseRequest(rawRequest: string): HttpRequest {
+    const [requestLine, ...rest] = rawRequest.split(CLRF);
+    const [method, path, version] = requestLine.split(' ');
+    const headers = new Map<string, string>();
+    let body = '';
+    let headerSection = true;
 
-    const body = request.split('\r\n\r\n')[1] || '';
-    const acceptEncodings = ['gzip', 'deflate', 'br'];
-
-    let acceptEncoding = '';
-    let foundAcceptEncoding = false;
-
-    for (const header of headers) {
-        if (header.toLowerCase().startsWith('accept-encoding:')) {
-            const encodings = header.split(':')[1].trim().split(',').map(enc => enc.trim());
-            for (const encoding of encodings) {
-                if (acceptEncodings.includes(encoding)) {
-                    acceptEncoding = encoding;
-                    foundAcceptEncoding = true;
-                    break;
-                }
-            }
+    for (const line of rest) {
+        if (line === '') {
+            headerSection = false;
+            continue;
         }
-        if (foundAcceptEncoding) break;
+
+        if (headerSection) {
+            const [key, value] = line.split(': ');
+            headers.set(key.toLowerCase(), value);
+        } else {
+            body += line;
+        }
     }
 
-    return { path, params, method, body, acceptEncoding };
-};
+    return {
+        method,
+        path,
+        version,
+        headers,
+        body,
+        param: path.split('/')[1] || ''
+    }
+}
 
-const server = net.createServer((socket) => {
-    socket.on('data', (data) => {
-        const request = data.toString();
-        const path = request.split(' ')[1];
-        const params = path.split('/')[1];
-        const method = request.split(' ')[0];
-        console.log('request', request)
-        let response: string;
+function createHttpResponse({ statusLine, headers, body }: HttpResponse): Buffer {
+    const headerLine = Array.from(headers.entries())
+        .map(([key, value]) => `${key}: ${value}`);
 
-        function changeResponse(response: string): void {
-            socket.write(response);
-            socket.end();
+    const responseHead = [
+        statusLine,
+        ...headerLine,
+        '',
+        ''
+    ].join(CLRF);
+
+    if (Buffer.isBuffer(body)) {
+        return Buffer.concat([
+            Buffer.from(responseHead),
+            body
+        ])
+    }
+
+    return Buffer.from(responseHead + body);
+}
+
+// Route Handlers
+class RouteHandlers {
+    private directory: string;
+
+    constructor (directory: string) {
+        this.directory = directory;
+    }
+
+    async handleRoot(): Promise<HttpResponse> {
+        return {
+            statusLine: 'HTTP/1.1 200 OK',
+            headers: new Map([
+                ['Content-Type', 'text/plain']
+            ]),
+            body: ''
+        }
+    }
+
+    async handleEcho(request: HttpRequest): Promise<HttpResponse> {
+        const message = request.path.split('/')[2];
+        const acceptEncoding = request.headers.get('accept-encoding');
+        let responseBody: string | Buffer = message;
+        const headers = new Map<string, string>([
+            ['Content-Type', 'text/plain']
+        ]);
+
+        if (acceptEncoding?.includes('gzip')) {
+            responseBody = zlib.gzipSync(Buffer.from(message));
+            headers.set('Content-Encoding', 'gzip');
         }
 
-        switch (params) {
-            case '': {
-                response = createHttpResponse('HTTP/1.1 200 OK', ['Content-Type: text/plain']);
+        headers.set('Content-Length', Buffer.byteLength(responseBody).toString());
 
-                changeResponse(response)
-                break;
-            }
-            case 'echo': {
-                const message = path.split('/')[2]
-                const reqBody = data.toString().split('\r\n')
-                const encoding = reqBody.filter((header) => header.includes("Accept-Encoding"));
-                const acceptEncoding = encoding.length > 0 ? encoding[0].split(": ")[1] : '';
-                response = createHttpResponse('HTTP/1.1 200 OK', ['Content-Type: text/plain', `Content-Length: ${message.length}`], message, acceptEncoding === '' ? undefined : acceptEncoding)
+        return {
+            statusLine: 'HTTP/1.1 200 OK',
+            headers,
+            body: responseBody
+        };
+    }
 
-                const buffer = Buffer.from(message, 'utf8');
-                const zipped = zlib.gzipSync(buffer);
+    async handleUserAgent(request: HttpRequest): Promise<HttpResponse> {
+        const userAgent = request.headers.get('user-agent') || '';
 
-                if (acceptEncoding === 'gzip') {
-                    // response = createHttpResponse('HTTP/1.1 200 OK', ['Content-Type: text/plain', `Content-Length: ${zipped.length}`], zipped, acceptEncoding)
-                    socket.write(`HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: ${zipped.length}\r\nContent-Encoding: gzip\r\n\r\n`);
-                    socket.write(zipped);
-                }
+        return {
+            statusLine: 'HTTP/1.1 200 OK',
+            headers: new Map([
+                ['Content-Type', 'text/plain'],
+                ['Content-Length', Buffer.byteLength(userAgent).toString()]
+            ]),
+            body: userAgent
+        };
+    }
 
-                changeResponse(response)
-                break;
-            }
-            case 'user-agent': {
-                const userAgent = request.split('User-Agent: ')[1].split('\r\n')[0]
-                response = `HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: ${userAgent.length}\r\n\r\n${userAgent}`
-                changeResponse(response)
-                break;
-            }
-            case 'files': {
-                const fileName = path.split('/')[2]
-                const dir = argv[argv.length - 1];
+    async handleFiles(request: HttpRequest): Promise<HttpResponse> {
+        const match = FILE_REGEX.exec(request.path);
 
-                if (method === 'GET') {
-                    try {
-                        const file = fs.readFileSync(`${dir}/${fileName}`);
-
-                        if (file) {
-                            const response = createHttpResponse('HTTP/1.1 200 OK', ['Content-Type: application/octet-stream', `Content-Length: ${file.length}`], file);
-                            changeResponse(response)
-                        }
-                    } catch (err) {
-                        const response = createHttpResponse('HTTP/1.1 404 Not Found');
-                        changeResponse(response);
-                    }
-                } else if (method === 'POST') {
-                    const match = FILE_REGEX.exec(path);
-
-                    if (!match) {
-                        const response = createHttpResponse('HTTP/1.1 400 Bad Request');
-                        changeResponse(response);
-                    } else {
-                        const args = argv[argv.length - 1]
-                        const filePath = NodePath.join(args, match[1])
-                        const data = request.split('\r\n\r\n')[1]
-
-                        fs.writeFile(filePath, data, () => {});
-                        const response = createHttpResponse('HTTP/1.1 201 Created');
-                        changeResponse(response);
-                    }
-                }
-                break;
-            }
-            default: {
-                response = 'HTTP/1.1 404 Not Found\r\n\r\n'
-                changeResponse(response)
-                break;
-            }
+        if (!match) {
+            return {
+                statusLine: 'HTTP/1.1 400 Bad Request',
+                headers: new Map(),
+                body: ''
+            };
         }
 
-        socket.end()
-    })
-});
+        if (request.method === 'GET') {
+            try {
+                const filePath = NodePath.join(this.directory, match[1]);
+                const file = await fs.promises.readFile(filePath);
 
-// You can use print statements as follows for debugging, they'll be visible when running tests.
-console.log("Logs from your program will appear here!");
+                return {
+                    statusLine: 'HTTP/1.1 200 OK',
+                    headers: new Map([
+                        ['Content-Type', 'application/octet-stream'],
+                        ['Content-Length', file.length.toString()]
+                    ]),
+                    body: file
+                };
+            } catch (err) {
+                return {
+                    statusLine: 'HTTP/1.1 404 Not Found',
+                    headers: new Map(),
+                    body: ''
+                };
+            }
+        } else if (request.method === 'POST') {
+            const filePath = NodePath.join(this.directory, match[1]);
+            await fs.promises.writeFile(filePath, request.body);
 
-// Uncomment this to pass the first stage
-server.listen(4221, 'localhost', () => {
-    console.log('Server is running on port 4221');
-});
+            return {
+                statusLine: 'HTTP/1.1 201 Created',
+                headers: new Map(),
+                body: ''
+            };
+        }
+
+        return {
+            statusLine: 'HTTP/1.1 405 Method Not Allowed',
+            headers: new Map(),
+            body: ''
+        };
+    }
+}
+
+// Server Setup
+async function startServer(port = DEFAULT_PORT, host = DEFAULT_HOST) {
+    const directory = argv[argv.length - 1];
+    const routeHandler = new RouteHandlers(directory);
+
+    const server = net.createServer(async (socket) => {
+        socket.on('data', async (data) => {
+            try {
+                const request = parseRequest(data.toString());
+                let response: HttpResponse;
+
+                switch (request.param) {
+                    case '':
+                        response = await routeHandler.handleRoot();
+                        break;
+                    case 'echo':
+                        response = await routeHandler.handleEcho(request);
+                        break;
+                    case 'user-agent':
+                        response = await routeHandler.handleUserAgent(request);
+                        break;
+                    case 'files':
+                        response = await routeHandler.handleFiles(request);
+                        break;
+                    default:
+                        response = {
+                            statusLine: 'HTTP/1.1 404 Not Found',
+                            headers: new Map(),
+                            body: ''
+                        };
+                }
+                socket.write(createHttpResponse(response));
+            } catch (error) {
+                console.error(error);
+                socket.write(createHttpResponse({
+                    statusLine: 'HTTP/1.1 500 Internal Server Error',
+                    headers: new Map(),
+                    body: ''
+                }))
+            } finally {
+                socket.end();
+            }
+        });
+    });
+    return new Promise<void>((resolve, reject) => {
+        server.listen(port, host, () => {
+            console.log(`Server listening on http://${host}:${port}`);
+            resolve();
+        })
+
+        server.on('error', reject)
+    });
+}
+
+startServer().catch(console.error);
