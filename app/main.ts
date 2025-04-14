@@ -217,7 +217,9 @@ async function startServer(port = DEFAULT_PORT, host = DEFAULT_HOST) {
 				if (request.headers.get("connection")?.toLowerCase() === "keep-alive") {
 					return; // Do not close the socket
 				}
-				socket.end(); // Close the socket
+				if (request.headers.get("connection")?.toLowerCase() === "close") {
+					socket.end(); // Close the socket
+				}
 			} catch (error) {
 				console.error(error);
 				socket.write(
