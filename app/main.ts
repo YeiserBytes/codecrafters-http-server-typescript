@@ -92,6 +92,12 @@ class RouteHandlers {
 			headers.set(HeadersEnum.CONTENT_ENCODING.toLowerCase(), "gzip");
 		}
 
+		if (headers.get("connection") === "close") {
+			headers.set("Connection", "close");
+		} else {
+			headers.set("Connection", "keep-alive");
+		}
+
 		headers.set(
 			HeadersEnum.CONTENT_LENGTH,
 			Buffer.byteLength(responseBody).toString(),
@@ -180,9 +186,9 @@ async function startServer(port = DEFAULT_PORT, host = DEFAULT_HOST) {
 	const routeHandler = new RouteHandlers(directory);
 
 	const server = net.createServer((socket) => {
-        socket.on("data", async (data) => {
-            const request = parseRequest(data.toString());
-            try {
+		socket.on("data", async (data) => {
+			const request = parseRequest(data.toString());
+			try {
 				let response: HttpResponse;
 
 				switch (request.param) {
@@ -211,6 +217,7 @@ async function startServer(port = DEFAULT_PORT, host = DEFAULT_HOST) {
 				if (request.headers.get("connection")?.toLowerCase() === "keep-alive") {
 					return; // Do not close the socket
 				}
+				socket.end(); // Close the socket
 			} catch (error) {
 				console.error(error);
 				socket.write(
