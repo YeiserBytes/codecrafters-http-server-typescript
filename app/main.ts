@@ -94,7 +94,9 @@ class RouteHandlers {
 
 		if (headers.get("connection") === "close") {
 			headers.set("Connection", "close");
-		} else {
+		} else if (
+            headers.get("connection") === "keep-alive" || headers.get("connection") === undefined
+		) {
 			headers.set("Connection", "keep-alive");
 		}
 
