@@ -35,6 +35,7 @@ enum HeadersEnum {
 	CONTENT_ENCODING = "Content-Encoding",
 	USER_AGENT = "User-Agent",
 	ACCEPT_ENCODING = "Accept-Encoding",
+	CONNECTION = "Connection",
 }
 
 export {

@@ -70,10 +70,23 @@ class RouteHandlers {
 		this.directory = directory;
 	}
 
-	async handleRoot(): Promise<HttpResponse> {
+	async handleRoot(request: HttpRequest): Promise<HttpResponse> {
+		const connectionHeader = request.headers.get(
+			HeadersEnum.CONNECTION.toLowerCase(),
+		);
+		const headers = new Map([[HeadersEnum.CONTENT_TYPE, "text/plain"]]);
+
+		if (connectionHeader === "keep-alive") {
+			headers.set(HeadersEnum.CONNECTION, "keep-alive");
+		} else if (connectionHeader === "close") {
+			headers.set(HeadersEnum.CONNECTION, "close");
+		} else {
+			headers.set(HeadersEnum.CONNECTION, "close");
+		}
+
 		return {
 			statusLine: this.statusLine,
-			headers: new Map([[HeadersEnum.CONTENT_TYPE, "text/plain"]]),
+			headers,
 			body: "",
 		};
 	}
@@ -82,7 +95,11 @@ class RouteHandlers {
 		const message = request.path.split("/")[2];
 		const acceptEncoding =
 			request.headers.get(HeadersEnum.ACCEPT_ENCODING.toLowerCase()) || "";
+		const connectionHeader = request.headers.get(
+			HeadersEnum.CONNECTION.toLowerCase(),
+		);
 		let responseBody: string | Buffer = message;
+
 		const headers = new Map<string, string>([
 			[HeadersEnum.CONTENT_TYPE, "text/plain"],
 		]);
@@ -92,12 +109,12 @@ class RouteHandlers {
 			headers.set(HeadersEnum.CONTENT_ENCODING.toLowerCase(), "gzip");
 		}
 
-		if (headers.get("connection") === "close") {
-			headers.set("Connection", "close");
-		} else if (
-            headers.get("connection") === "keep-alive" || headers.get("connection") === undefined
-		) {
-			headers.set("Connection", "keep-alive");
+		if (connectionHeader === "keep-alive") {
+			headers.set(HeadersEnum.CONNECTION, "keep-alive");
+		} else if (connectionHeader === "close") {
+			headers.set(HeadersEnum.CONNECTION, "close");
+		} else {
+			headers.set(HeadersEnum.CONNECTION, "close");
 		}
 
 		headers.set(
@@ -115,13 +132,25 @@ class RouteHandlers {
 	async handleUserAgent(request: HttpRequest): Promise<HttpResponse> {
 		const userAgent =
 			request.headers.get(HeadersEnum.USER_AGENT.toLowerCase()) || "";
+		const headers = new Map([
+			[HeadersEnum.CONTENT_TYPE, "text/plain"],
+			[HeadersEnum.CONTENT_LENGTH, Buffer.byteLength(userAgent).toString()],
+		]);
+		const connectionHeader = request.headers.get(
+			HeadersEnum.CONNECTION.toLowerCase(),
+		);
+
+		if (connectionHeader === "keep-alive") {
+			headers.set(HeadersEnum.CONNECTION, "keep-alive");
+		} else if (connectionHeader === "close") {
+			headers.set(HeadersEnum.CONNECTION, "close");
+		} else {
+			headers.set(HeadersEnum.CONNECTION, "close");
+		}
 
 		return {
 			statusLine: this.statusLine,
-			headers: new Map([
-				[HeadersEnum.CONTENT_TYPE, "text/plain"],
-				[HeadersEnum.CONTENT_LENGTH, Buffer.byteLength(userAgent).toString()],
-			]),
+			headers,
 			body: userAgent,
 		};
 	}
@@ -143,13 +172,14 @@ class RouteHandlers {
 			try {
 				const filePath = NodePath.join(this.directory, match[1]);
 				const file = await fs.promises.readFile(filePath);
+                const headers = new Map([
+                    [HeadersEnum.CONTENT_TYPE, "application/octet-stream"],
+                    [HeadersEnum.CONTENT_LENGTH, file.length.toString()],
+                ])
 
 				return {
 					statusLine: this.statusLine,
-					headers: new Map([
-						[HeadersEnum.CONTENT_TYPE, "application/octet-stream"],
-						[HeadersEnum.CONTENT_LENGTH, file.length.toString()],
-					]),
+					headers,
 					body: file,
 				};
 			} catch (err) {
@@ -195,7 +225,7 @@ async function startServer(port = DEFAULT_PORT, host = DEFAULT_HOST) {
 
 				switch (request.param) {
 					case HttpParamEnum.EMPTY:
-						response = await routeHandler.handleRoot();
+						response = await routeHandler.handleRoot(request);
 						break;
 					case HttpParamEnum.ECHO:
 						response = await routeHandler.handleEcho(request);
